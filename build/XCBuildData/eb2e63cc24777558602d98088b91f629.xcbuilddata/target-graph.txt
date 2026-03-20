@@ -1,0 +1,4 @@
+Target dependency graph (2 targets)
+Target 'WidgetHost' in project 'Widget'
+➜ Explicit dependency on target 'MyWidget' in project 'Widget'
+Target 'MyWidget' in project 'Widget' (no dependencies)

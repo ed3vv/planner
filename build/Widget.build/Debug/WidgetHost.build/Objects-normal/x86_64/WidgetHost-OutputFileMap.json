@@ -1,0 +1,29 @@
+{
+  "" : {
+    "diagnostics" : "/Users/eden/Desktop/widget/build/Widget.build/Debug/WidgetHost.build/Objects-normal/x86_64/WidgetHost-primary.dia",
+    "emit-module-dependencies" : "/Users/eden/Desktop/widget/build/Widget.build/Debug/WidgetHost.build/Objects-normal/x86_64/WidgetHost-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/eden/Desktop/widget/build/Widget.build/Debug/WidgetHost.build/Objects-normal/x86_64/WidgetHost-primary-emit-module.dia",
+    "pch" : "/Users/eden/Desktop/widget/build/Widget.build/Debug/WidgetHost.build/Objects-normal/x86_64/WidgetHost-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/eden/Desktop/widget/build/Widget.build/Debug/WidgetHost.build/Objects-normal/x86_64/WidgetHost-primary.swiftdeps"
+  },
+  "/Users/eden/Desktop/widget/WidgetHost/ContentView.swift" : {
+    "const-values" : "/Users/eden/Desktop/widget/build/Widget.build/Debug/WidgetHost.build/Objects-normal/x86_64/ContentView.swiftconstvalues",
+    "dependencies" : "/Users/eden/Desktop/widget/build/Widget.build/Debug/WidgetHost.build/Objects-normal/x86_64/ContentView.d",
+    "diagnostics" : "/Users/eden/Desktop/widget/build/Widget.build/Debug/WidgetHost.build/Objects-normal/x86_64/ContentView.dia",
+    "index-unit-output-path" : "/Widget.build/Debug/WidgetHost.build/Objects-normal/x86_64/ContentView.o",
+    "llvm-bc" : "/Users/eden/Desktop/widget/build/Widget.build/Debug/WidgetHost.build/Objects-normal/x86_64/ContentView.bc",
+    "object" : "/Users/eden/Desktop/widget/build/Widget.build/Debug/WidgetHost.build/Objects-normal/x86_64/ContentView.o",
+    "swift-dependencies" : "/Users/eden/Desktop/widget/build/Widget.build/Debug/WidgetHost.build/Objects-normal/x86_64/ContentView.swiftdeps",
+    "swiftmodule" : "/Users/eden/Desktop/widget/build/Widget.build/Debug/WidgetHost.build/Objects-normal/x86_64/ContentView~partial.swiftmodule"
+  },
+  "/Users/eden/Desktop/widget/WidgetHost/WidgetHostApp.swift" : {
+    "const-values" : "/Users/eden/Desktop/widget/build/Widget.build/Debug/WidgetHost.build/Objects-normal/x86_64/WidgetHostApp.swiftconstvalues",
+    "dependencies" : "/Users/eden/Desktop/widget/build/Widget.build/Debug/WidgetHost.build/Objects-normal/x86_64/WidgetHostApp.d",
+    "diagnostics" : "/Users/eden/Desktop/widget/build/Widget.build/Debug/WidgetHost.build/Objects-normal/x86_64/WidgetHostApp.dia",
+    "index-unit-output-path" : "/Widget.build/Debug/WidgetHost.build/Objects-normal/x86_64/WidgetHostApp.o",
+    "llvm-bc" : "/Users/eden/Desktop/widget/build/Widget.build/Debug/WidgetHost.build/Objects-normal/x86_64/WidgetHostApp.bc",
+    "object" : "/Users/eden/Desktop/widget/build/Widget.build/Debug/WidgetHost.build/Objects-normal/x86_64/WidgetHostApp.o",
+    "swift-dependencies" : "/Users/eden/Desktop/widget/build/Widget.build/Debug/WidgetHost.build/Objects-normal/x86_64/WidgetHostApp.swiftdeps",
+    "swiftmodule" : "/Users/eden/Desktop/widget/build/Widget.build/Debug/WidgetHost.build/Objects-normal/x86_64/WidgetHostApp~partial.swiftmodule"
+  }
+}
