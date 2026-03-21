@@ -24,5 +24,7 @@
 	<string>NSApplication</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Used to read the current browser tab URL for focus tracking.</string>
 </dict>
 </plist>

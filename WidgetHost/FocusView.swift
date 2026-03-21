@@ -11,6 +11,8 @@ extension AppCategory {
     }
 }
 
+// MARK: - StatsView
+
 struct StatsView: View {
     @EnvironmentObject var appTracker: AppTracker
 
@@ -51,7 +53,7 @@ struct StatsView: View {
 
                 DSDivider()
 
-                // Trends
+                // Trends + Stats on same page
                 TrendsSection()
                     .environmentObject(appTracker)
 
@@ -59,15 +61,13 @@ struct StatsView: View {
 
                 // Last session recap
                 if let recap = appTracker.lastRecap {
-                    TimelineSection(title: "Last session", subtitle: recapSubtitle(recap),
-                                    events: recap.events)
-                    DSDivider()
-                }
-
-                // Today's full timeline
-                let timeline = appTracker.todayTimeline
-                if !timeline.isEmpty {
-                    TimelineSection(title: "Today's timeline", subtitle: nil, events: timeline)
+                    SessionTimelineSection(
+                        title: "Last session",
+                        subtitle: recapSubtitle(recap),
+                        events: recap.events,
+                        start: recap.startedAt,
+                        end: recap.endedAt
+                    )
                     DSDivider()
                 }
 
@@ -102,7 +102,10 @@ struct StatsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
                     ForEach(appTracker.todayUsage) { usage in
-                        AppRow(usage: usage, total: totalTime)
+                        AppRow(usage: usage, total: totalTime) { newCat in
+                            if let newCat { appTracker.setCategory(newCat, for: usage.bundleID) }
+                            else          { appTracker.resetCategory(for: usage.bundleID) }
+                        }
                         DSDivider().padding(.leading, DS.Space.lg)
                     }
                 }
@@ -113,9 +116,7 @@ struct StatsView: View {
 
     func recapSubtitle(_ recap: SessionRecap) -> String {
         let tf = DateFormatter(); tf.dateFormat = "h:mm a"
-        let start = tf.string(from: recap.startedAt)
-        let end   = tf.string(from: recap.endedAt)
-        return "\(start) – \(end) · \(Int(recap.focusScore))% focus"
+        return "\(tf.string(from: recap.startedAt)) – \(tf.string(from: recap.endedAt))  ·  \(Int(recap.focusScore))% focus"
     }
 
     var scoreColor: Color {
@@ -138,6 +139,135 @@ struct StatsView: View {
     }
 }
 
+// MARK: - Session timeline section (header + bar)
+
+struct SessionTimelineSection: View {
+    let title: String
+    let subtitle: String?
+    let events: [AppEvent]
+    let start: Date
+    let end: Date
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(DS.T.caption())
+                    .foregroundStyle(DS.C.textFaint)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(DS.T.caption(10))
+                        .foregroundStyle(DS.C.textFaint.opacity(0.7))
+                }
+            }
+            .padding(.horizontal, DS.Space.lg)
+            .padding(.top, DS.Space.md)
+            .padding(.bottom, DS.Space.sm)
+
+            TimelineBar(events: events, startTime: start, endTime: end)
+                .padding(.horizontal, DS.Space.lg)
+                .padding(.bottom, DS.Space.md)
+        }
+    }
+}
+
+// MARK: - Wakatime-style timeline bar
+
+struct TimelineBar: View {
+    let events: [AppEvent]
+    let startTime: Date
+    let endTime: Date
+
+    @State private var hoveredEvent: AppEvent? = nil
+
+    var totalDuration: TimeInterval { max(endTime.timeIntervalSince(startTime), 1) }
+    var midTime: Date { startTime.addingTimeInterval(totalDuration / 2) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // The bar
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    // Track
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(DS.C.bg2)
+                        .frame(height: 22)
+
+                    // Segments
+                    ForEach(events) { event in
+                        segment(event: event, width: geo.size.width)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(let pt):
+                        let frac = Double(pt.x / max(geo.size.width, 1))
+                        let t    = startTime.addingTimeInterval(totalDuration * max(0, min(1, frac)))
+                        hoveredEvent = events.last(where: { $0.startTime <= t })
+                    case .ended:
+                        hoveredEvent = nil
+                    }
+                }
+            }
+            .frame(height: 22)
+
+            // Tooltip row / time axis
+            HStack(spacing: DS.Space.xs) {
+                if let e = hoveredEvent {
+                    Circle()
+                        .fill(e.category.color)
+                        .frame(width: 5, height: 5)
+                    Text(e.name)
+                        .font(DS.T.caption(11))
+                        .foregroundStyle(DS.C.textPrimary)
+                        .lineLimit(1)
+                    Spacer()
+                    Text(fmtDuration(e.duration))
+                        .font(DS.T.mono(10))
+                        .foregroundStyle(DS.C.textFaint)
+                } else {
+                    Text(fmtTime(startTime))
+                        .font(DS.T.mono(9))
+                        .foregroundStyle(DS.C.textFaint)
+                    Spacer()
+                    Text(fmtTime(midTime))
+                        .font(DS.T.mono(9))
+                        .foregroundStyle(DS.C.textFaint)
+                    Spacer()
+                    Text(fmtTime(endTime))
+                        .font(DS.T.mono(9))
+                        .foregroundStyle(DS.C.textFaint)
+                }
+            }
+            .animation(.easeOut(duration: 0.1), value: hoveredEvent?.id)
+            .frame(height: 14)
+        }
+    }
+
+    @ViewBuilder
+    private func segment(event: AppEvent, width: CGFloat) -> some View {
+        let offset = CGFloat(event.startTime.timeIntervalSince(startTime) / totalDuration) * width
+        let segW   = max(CGFloat(event.duration / totalDuration) * width, 1.5)
+        let isHov  = hoveredEvent?.id == event.id
+
+        Rectangle()
+            .fill(event.category.color.opacity(isHov ? 0.95 : 0.6))
+            .frame(width: segW, height: 22)
+            .offset(x: offset)
+    }
+
+    private func fmtTime(_ date: Date) -> String {
+        let f = DateFormatter(); f.dateFormat = "h:mm"; return f.string(from: date)
+    }
+    private func fmtDuration(_ t: TimeInterval) -> String {
+        let h = Int(t) / 3600; let m = Int(t) % 3600 / 60; let s = Int(t) % 60
+        if h > 0 { return "\(h)h \(m)m" }
+        if m > 0 { return "\(m)m" }
+        return "\(s)s"
+    }
+}
+
 // MARK: - Trends
 
 struct TrendsSection: View {
@@ -152,15 +282,9 @@ struct TrendsSection: View {
                 .padding(.top, DS.Space.md)
 
             HStack(spacing: DS.Space.sm) {
-                TrendTile(label: "Focus score",
-                          value: "\(Int(appTracker.avgFocusScore))",
-                          unit: "%")
-                TrendTile(label: "Focus/day",
-                          value: formatDuration(appTracker.avgFocusedTimePerDay),
-                          unit: nil)
-                TrendTile(label: "Per session",
-                          value: formatDuration(appTracker.avgSessionLength),
-                          unit: nil)
+                TrendTile(label: "Avg focus",     value: "\(Int(appTracker.avgFocusScore))", unit: "%")
+                TrendTile(label: "Focus/day",     value: fmtDuration(appTracker.avgFocusedTimePerDay), unit: nil)
+                TrendTile(label: "Per session",   value: fmtDuration(appTracker.avgSessionLength),     unit: nil)
             }
             .padding(.horizontal, DS.Space.lg)
 
@@ -171,9 +295,8 @@ struct TrendsSection: View {
         }
     }
 
-    func formatDuration(_ t: TimeInterval) -> String {
-        let h = Int(t) / 3600
-        let m = Int(t) % 3600 / 60
+    func fmtDuration(_ t: TimeInterval) -> String {
+        let h = Int(t) / 3600; let m = Int(t) % 3600 / 60
         if h > 0 { return "\(h)h\(m)m" }
         if m > 0 { return "\(m)m" }
         return t > 0 ? "<1m" : "--"
@@ -211,28 +334,60 @@ struct TrendTile: View {
 
 struct Sparkline: View {
     let records: [DailyRecord]
+    @State private var hoveredRecord: DailyRecord? = nil
 
     var maxScore: Double { max(records.map(\.focusScore).max() ?? 1, 1) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            // Tooltip row
+            HStack(spacing: DS.Space.xs) {
+                if let r = hoveredRecord {
+                    Text(hoveredDayLabel(r.dayKey))
+                        .font(DS.T.mono(10))
+                        .foregroundStyle(DS.C.textFaint)
+                    Spacer()
+                    HStack(spacing: DS.Space.sm) {
+                        HStack(spacing: 3) {
+                            Circle().fill(DS.C.green).frame(width: 5, height: 5)
+                            Text(fmtDuration(r.productiveSeconds))
+                                .font(DS.T.mono(10))
+                                .foregroundStyle(DS.C.textPrimary)
+                        }
+                        HStack(spacing: 3) {
+                            Circle().fill(DS.C.red).frame(width: 5, height: 5)
+                            Text(fmtDuration(r.distractingSeconds))
+                                .font(DS.T.mono(10))
+                                .foregroundStyle(DS.C.textPrimary)
+                        }
+                        Text("\(Int(r.focusScore))%")
+                            .font(DS.T.mono(10))
+                            .foregroundStyle(DS.C.textFaint)
+                    }
+                }
+            }
+            .frame(height: 14)
+            .animation(.easeOut(duration: 0.1), value: hoveredRecord?.dayKey)
+
             GeometryReader { geo in
-                let w = geo.size.width
-                let h = geo.size.height
+                let w     = geo.size.width
+                let h     = geo.size.height
                 let count = records.count
-                let barW = (w - CGFloat(count - 1) * 3) / CGFloat(count)
+                let barW  = (w - CGFloat(count - 1) * 3) / CGFloat(count)
 
                 HStack(alignment: .bottom, spacing: 3) {
                     ForEach(records) { rec in
                         let fraction = maxScore > 0 ? rec.focusScore / 100 : 0
-                        let barH = max(CGFloat(fraction) * h, 2)
+                        let barH     = max(CGFloat(fraction) * h, 2)
+                        let isHov    = hoveredRecord?.dayKey == rec.dayKey
                         let color: Color = rec.focusScore >= 70 ? DS.C.green
                                         : rec.focusScore >= 40 ? DS.C.orange
                                         : rec.totalSeconds > 0 ? DS.C.red
                                         : DS.C.bg2
                         RoundedRectangle(cornerRadius: 2)
-                            .fill(color.opacity(rec.totalSeconds > 0 ? 0.75 : 0.3))
-                            .frame(width: barW, height: barH)
+                            .fill(color.opacity(isHov ? 1.0 : (rec.totalSeconds > 0 ? 0.75 : 0.3)))
+                            .frame(width: barW, height: isHov ? min(barH + 2, h) : barH)
+                            .onHover { inside in hoveredRecord = inside ? rec : nil }
                     }
                 }
                 .frame(maxHeight: .infinity, alignment: .bottom)
@@ -240,7 +395,6 @@ struct Sparkline: View {
             }
             .frame(height: 28)
 
-            // Day labels (Mon, Tue…)
             HStack(spacing: 3) {
                 ForEach(records) { rec in
                     Text(dayLabel(rec.dayKey))
@@ -254,107 +408,20 @@ struct Sparkline: View {
 
     func dayLabel(_ key: String) -> String {
         guard let date = AppTracker.dayFmtPublic.date(from: key) else { return "" }
-        let f = DateFormatter()
-        f.dateFormat = "EEE"
+        let f = DateFormatter(); f.dateFormat = "EEE"
         return String(f.string(from: date).prefix(1))
     }
-
-    func isToday(_ key: String) -> Bool {
-        AppTracker.dayFmtPublic.string(from: Date()) == key
+    func hoveredDayLabel(_ key: String) -> String {
+        guard let date = AppTracker.dayFmtPublic.date(from: key) else { return key }
+        let f = DateFormatter(); f.dateFormat = "EEE, MMM d"
+        return f.string(from: date)
     }
-}
-
-// MARK: - Timeline
-
-struct TimelineSection: View {
-    let title: String
-    let subtitle: String?
-    let events: [AppEvent]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(DS.T.caption())
-                    .foregroundStyle(DS.C.textFaint)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(DS.T.caption(10))
-                        .foregroundStyle(DS.C.textFaint.opacity(0.7))
-                }
-            }
-            .padding(.horizontal, DS.Space.lg)
-            .padding(.top, DS.Space.md)
-            .padding(.bottom, DS.Space.sm)
-
-            ForEach(events) { event in
-                TimelineRow(event: event)
-            }
-
-            Spacer(minLength: DS.Space.sm)
-        }
-    }
-}
-
-struct TimelineRow: View {
-    let event: AppEvent
-    @State private var isHovered = false
-
-    var icon: NSImage? {
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: event.bundleID) else { return nil }
-        return NSWorkspace.shared.icon(forFile: url.path)
-    }
-
-    var body: some View {
-        HStack(spacing: DS.Space.sm) {
-            // Time
-            Text(timeLabel)
-                .font(DS.T.mono(10))
-                .foregroundStyle(DS.C.textFaint)
-                .frame(width: 46, alignment: .trailing)
-
-            // Category dot
-            Circle()
-                .fill(event.category.color.opacity(0.8))
-                .frame(width: 5, height: 5)
-
-            // Icon
-            if let img = icon {
-                Image(nsImage: img).resizable().frame(width: 14, height: 14)
-            } else {
-                RoundedRectangle(cornerRadius: 3).fill(DS.C.bg2).frame(width: 14, height: 14)
-            }
-
-            // Name
-            Text(event.name)
-                .font(DS.T.body())
-                .foregroundStyle(DS.C.textPrimary)
-                .lineLimit(1)
-
-            Spacer()
-
-            // Duration
-            Text(formatDuration(event.duration))
-                .font(DS.T.mono(11))
-                .foregroundStyle(DS.C.textMuted)
-        }
-        .padding(.horizontal, DS.Space.lg)
-        .padding(.vertical, 5)
-        .background(isHovered ? DS.C.bg1 : .clear)
-        .onHover { isHovered = $0 }
-        .animation(.easeOut(duration: 0.1), value: isHovered)
-    }
-
-    var timeLabel: String {
-        let f = DateFormatter(); f.dateFormat = "h:mm"
-        return f.string(from: event.startTime)
-    }
-
-    func formatDuration(_ t: TimeInterval) -> String {
-        let h = Int(t) / 3600; let m = Int(t) % 3600 / 60; let s = Int(t) % 60
+    func isToday(_ key: String) -> Bool { AppTracker.dayFmtPublic.string(from: Date()) == key }
+    func fmtDuration(_ t: TimeInterval) -> String {
+        let h = Int(t) / 3600; let m = Int(t) % 3600 / 60
         if h > 0 { return "\(h)h\(m)m" }
         if m > 0 { return "\(m)m" }
-        return "\(s)s"
+        return t > 0 ? "<1m" : "--"
     }
 }
 
@@ -368,13 +435,13 @@ struct StatPill: View {
     var body: some View {
         HStack(spacing: 3) {
             Circle().fill(color).frame(width: 5, height: 5)
-            Text("\(label) \(formatDuration(time))")
+            Text("\(label) \(fmtDuration(time))")
                 .font(DS.T.caption())
                 .foregroundStyle(DS.C.textMuted)
         }
     }
 
-    func formatDuration(_ t: TimeInterval) -> String {
+    func fmtDuration(_ t: TimeInterval) -> String {
         let h = Int(t) / 3600; let m = Int(t) % 3600 / 60
         if h > 0 { return "\(h)h\(m)m" }
         if m > 0 { return "\(m)m" }
@@ -385,6 +452,7 @@ struct StatPill: View {
 struct AppRow: View {
     let usage: AppUsage
     let total: TimeInterval
+    var onSetCategory: ((AppCategory?) -> Void)? = nil   // nil = reset to default
     @State private var isHovered = false
 
     var fraction: Double { total > 0 ? min(usage.duration / total, 1) : 0 }
@@ -422,7 +490,7 @@ struct AppRow: View {
 
             Spacer()
 
-            Text(formatDuration(usage.duration))
+            Text(fmtDuration(usage.duration))
                 .font(DS.T.mono(11))
                 .foregroundStyle(DS.C.textMuted)
         }
@@ -431,9 +499,32 @@ struct AppRow: View {
         .background(isHovered ? DS.C.bg2 : .clear)
         .onHover { isHovered = $0 }
         .animation(.easeOut(duration: 0.1), value: isHovered)
+        .contextMenu {
+            if let setter = onSetCategory {
+                Text(usage.name).font(.headline)
+                Divider()
+                Button {
+                    setter(.productive)
+                } label: {
+                    Label("Productive", systemImage: usage.category == .productive ? "checkmark.circle.fill" : "circle")
+                }
+                Button {
+                    setter(.neutral)
+                } label: {
+                    Label("Neutral", systemImage: usage.category == .neutral ? "checkmark.circle.fill" : "circle")
+                }
+                Button {
+                    setter(.distracting)
+                } label: {
+                    Label("Distracting", systemImage: usage.category == .distracting ? "checkmark.circle.fill" : "circle")
+                }
+                Divider()
+                Button("Reset to default") { setter(nil) }
+            }
+        }
     }
 
-    func formatDuration(_ t: TimeInterval) -> String {
+    func fmtDuration(_ t: TimeInterval) -> String {
         let h = Int(t) / 3600; let m = Int(t) % 3600 / 60
         if h > 0 { return "\(h)h \(m)m" }
         if m > 0 { return "\(m)m" }
