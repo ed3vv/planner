@@ -59,15 +59,10 @@ struct StatsView: View {
 
                 DSDivider()
 
-                // Last session recap
-                if let recap = appTracker.lastRecap {
-                    SessionTimelineSection(
-                        title: "Last session",
-                        subtitle: recapSubtitle(recap),
-                        events: recap.events,
-                        start: recap.startedAt,
-                        end: recap.endedAt
-                    )
+                // Today's sessions
+                let sessions = appTracker.todaySessions
+                if !sessions.isEmpty {
+                    TodaySessionsView(sessions: sessions)
                     DSDivider()
                 }
 
@@ -112,11 +107,6 @@ struct StatsView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    func recapSubtitle(_ recap: SessionRecap) -> String {
-        let tf = DateFormatter(); tf.dateFormat = "h:mm a"
-        return "\(tf.string(from: recap.startedAt)) – \(tf.string(from: recap.endedAt))  ·  \(Int(recap.focusScore))% focus"
     }
 
     var scoreColor: Color {
@@ -223,6 +213,9 @@ struct TimelineBar: View {
                         .foregroundStyle(DS.C.textPrimary)
                         .lineLimit(1)
                     Spacer()
+                    Text("\(fmtTime(e.startTime)) – \(fmtTime(e.startTime.addingTimeInterval(e.duration)))")
+                        .font(DS.T.mono(10))
+                        .foregroundStyle(DS.C.textMuted)
                     Text(fmtDuration(e.duration))
                         .font(DS.T.mono(10))
                         .foregroundStyle(DS.C.textFaint)
@@ -274,22 +267,19 @@ struct TrendsSection: View {
     @EnvironmentObject var appTracker: AppTracker
 
     var body: some View {
+        let today = appTracker.todayRecord
         VStack(alignment: .leading, spacing: DS.Space.sm) {
-            Text("Trends")
-                .font(DS.T.caption())
-                .foregroundStyle(DS.C.textFaint)
-                .padding(.horizontal, DS.Space.lg)
-                .padding(.top, DS.Space.md)
-
+            // Today stats
             HStack(spacing: DS.Space.sm) {
-                TrendTile(label: "Avg focus",     value: "\(Int(appTracker.avgFocusScore))", unit: "%")
-                TrendTile(label: "Focus/day",     value: fmtDuration(appTracker.avgFocusedTimePerDay), unit: nil)
-                TrendTile(label: "Per session",   value: fmtDuration(appTracker.avgSessionLength),     unit: nil)
+                StatTile(label: "Focus today",  value: fmtDuration(today.productiveSeconds),  color: DS.C.green)
+                StatTile(label: "Wasted today", value: fmtDuration(today.distractingSeconds), color: DS.C.red)
+                StatTile(label: "Efficiency",   value: "\(Int(today.focusScore))%",           color: DS.C.accent)
             }
             .padding(.horizontal, DS.Space.lg)
+            .padding(.top, DS.Space.md)
 
-            // 7-day sparkline
-            Sparkline(records: appTracker.last7Days)
+            // 7-day line graph
+            WeekLineGraph(records: appTracker.last7Days)
                 .padding(.horizontal, DS.Space.lg)
                 .padding(.bottom, DS.Space.md)
         }
@@ -303,23 +293,16 @@ struct TrendsSection: View {
     }
 }
 
-struct TrendTile: View {
+struct StatTile: View {
     let label: String
     let value: String
-    let unit: String?
+    let color: Color
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .lastTextBaseline, spacing: 2) {
-                Text(value)
-                    .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(DS.C.textPrimary)
-                if let unit {
-                    Text(unit)
-                        .font(DS.T.caption(10))
-                        .foregroundStyle(DS.C.textFaint)
-                }
-            }
+            Text(value)
+                .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                .foregroundStyle(color)
             Text(label)
                 .font(DS.T.caption(10))
                 .foregroundStyle(DS.C.textFaint)
@@ -332,17 +315,23 @@ struct TrendTile: View {
     }
 }
 
-struct Sparkline: View {
-    let records: [DailyRecord]
-    @State private var hoveredRecord: DailyRecord? = nil
+// MARK: - Week Line Graph
 
-    var maxScore: Double { max(records.map(\.focusScore).max() ?? 1, 1) }
+struct WeekLineGraph: View {
+    let records: [DailyRecord]
+    @State private var hoveredIndex: Int? = nil
+
+    // Normalize a seconds value to 0…1 using the max total seconds across all days
+    private var maxSeconds: Double {
+        max(records.map { max($0.productiveSeconds, $0.distractingSeconds) }.max() ?? 1, 1)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            // Tooltip row
-            HStack(spacing: DS.Space.xs) {
-                if let r = hoveredRecord {
+            // Tooltip / legend row
+            HStack(spacing: DS.Space.sm) {
+                if let idx = hoveredIndex, idx < records.count {
+                    let r = records[idx]
                     Text(hoveredDayLabel(r.dayKey))
                         .font(DS.T.mono(10))
                         .foregroundStyle(DS.C.textFaint)
@@ -351,51 +340,91 @@ struct Sparkline: View {
                         HStack(spacing: 3) {
                             Circle().fill(DS.C.green).frame(width: 5, height: 5)
                             Text(fmtDuration(r.productiveSeconds))
-                                .font(DS.T.mono(10))
-                                .foregroundStyle(DS.C.textPrimary)
+                                .font(DS.T.mono(10)).foregroundStyle(DS.C.textPrimary)
                         }
                         HStack(spacing: 3) {
                             Circle().fill(DS.C.red).frame(width: 5, height: 5)
                             Text(fmtDuration(r.distractingSeconds))
-                                .font(DS.T.mono(10))
-                                .foregroundStyle(DS.C.textPrimary)
+                                .font(DS.T.mono(10)).foregroundStyle(DS.C.textPrimary)
                         }
                         Text("\(Int(r.focusScore))%")
-                            .font(DS.T.mono(10))
-                            .foregroundStyle(DS.C.textFaint)
+                            .font(DS.T.mono(10)).foregroundStyle(DS.C.textFaint)
                     }
+                } else {
+                    HStack(spacing: DS.Space.sm) {
+                        legendDot(DS.C.green,  "Focus")
+                        legendDot(DS.C.red,    "Distracted")
+                        legendDot(DS.C.accent, "Efficiency")
+                    }
+                    Spacer()
                 }
             }
             .frame(height: 14)
-            .animation(.easeOut(duration: 0.1), value: hoveredRecord?.dayKey)
+            .animation(.easeOut(duration: 0.1), value: hoveredIndex)
 
+            // Graph canvas
             GeometryReader { geo in
-                let w     = geo.size.width
-                let h     = geo.size.height
-                let count = records.count
-                let barW  = (w - CGFloat(count - 1) * 3) / CGFloat(count)
+                let w = geo.size.width
+                let h = geo.size.height
+                let count = max(records.count, 1)
+                let step  = w / CGFloat(count - 1 > 0 ? count - 1 : 1)
 
-                HStack(alignment: .bottom, spacing: 3) {
-                    ForEach(records) { rec in
-                        let fraction = maxScore > 0 ? rec.focusScore / 100 : 0
-                        let barH     = max(CGFloat(fraction) * h, 2)
-                        let isHov    = hoveredRecord?.dayKey == rec.dayKey
-                        let color: Color = rec.focusScore >= 70 ? DS.C.green
-                                        : rec.focusScore >= 40 ? DS.C.orange
-                                        : rec.totalSeconds > 0 ? DS.C.red
-                                        : DS.C.bg2
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(color.opacity(isHov ? 1.0 : (rec.totalSeconds > 0 ? 0.75 : 0.3)))
-                            .frame(width: barW, height: isHov ? min(barH + 2, h) : barH)
-                            .onHover { inside in hoveredRecord = inside ? rec : nil }
+                ZStack {
+                    // Grid lines
+                    ForEach([0.25, 0.5, 0.75], id: \.self) { frac in
+                        Path { p in
+                            let y = h * (1 - frac)
+                            p.move(to: CGPoint(x: 0, y: y))
+                            p.addLine(to: CGPoint(x: w, y: y))
+                        }
+                        .stroke(DS.C.border.opacity(0.4), style: StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+                    }
+
+                    // Focus line (green)
+                    linePath(values: records.map { $0.productiveSeconds / maxSeconds },
+                             width: w, height: h, step: step)
+                        .stroke(DS.C.green, style: StrokeStyle(lineWidth: 1.5, lineJoin: .round))
+
+                    // Distracted line (red)
+                    linePath(values: records.map { $0.distractingSeconds / maxSeconds },
+                             width: w, height: h, step: step)
+                        .stroke(DS.C.red, style: StrokeStyle(lineWidth: 1.5, lineJoin: .round))
+
+                    // Efficiency line (accent, dashed)
+                    linePath(values: records.map { $0.focusScore / 100 },
+                             width: w, height: h, step: step)
+                        .stroke(DS.C.accent, style: StrokeStyle(lineWidth: 1.5, lineJoin: .round, dash: [4, 2]))
+
+                    // Hover dots + vertical rule
+                    if let idx = hoveredIndex, idx < records.count {
+                        let x = CGFloat(idx) * step
+                        // Vertical rule
+                        Path { p in
+                            p.move(to: CGPoint(x: x, y: 0))
+                            p.addLine(to: CGPoint(x: x, y: h))
+                        }
+                        .stroke(DS.C.textFaint.opacity(0.3), lineWidth: 1)
+
+                        let r = records[idx]
+                        dot(x: x, y: h * (1 - r.productiveSeconds / maxSeconds),  color: DS.C.green)
+                        dot(x: x, y: h * (1 - r.distractingSeconds / maxSeconds), color: DS.C.red)
+                        dot(x: x, y: h * (1 - r.focusScore / 100),                color: DS.C.accent)
+                    }
+
+                    // Invisible hover areas per column
+                    HStack(spacing: 0) {
+                        ForEach(records.indices, id: \.self) { idx in
+                            Color.clear
+                                .contentShape(Rectangle())
+                                .onHover { inside in hoveredIndex = inside ? idx : nil }
+                        }
                     }
                 }
-                .frame(maxHeight: .infinity, alignment: .bottom)
-                .frame(width: w)
             }
-            .frame(height: 28)
+            .frame(height: 52)
 
-            HStack(spacing: 3) {
+            // Day labels
+            HStack(spacing: 0) {
                 ForEach(records) { rec in
                     Text(dayLabel(rec.dayKey))
                         .font(DS.T.caption(9))
@@ -406,18 +435,48 @@ struct Sparkline: View {
         }
     }
 
-    func dayLabel(_ key: String) -> String {
+    // MARK: Helpers
+
+    private func linePath(values: [Double], width: CGFloat, height: CGFloat, step: CGFloat) -> Path {
+        var path = Path()
+        for (i, v) in values.enumerated() {
+            let x = CGFloat(i) * step
+            let y = height * CGFloat(1 - max(0, min(1, v)))
+            if i == 0 { path.move(to: CGPoint(x: x, y: y)) }
+            else       { path.addLine(to: CGPoint(x: x, y: y)) }
+        }
+        return path
+    }
+
+    @ViewBuilder
+    private func dot(x: CGFloat, y: CGFloat, color: Color) -> some View {
+        Circle()
+            .fill(color)
+            .frame(width: 5, height: 5)
+            .offset(x: x - 2.5, y: y - 2.5)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private func legendDot(_ color: Color, _ label: String) -> some View {
+        HStack(spacing: 3) {
+            Circle().fill(color).frame(width: 5, height: 5)
+            Text(label).font(DS.T.caption(9)).foregroundStyle(DS.C.textFaint)
+        }
+    }
+
+    private func dayLabel(_ key: String) -> String {
         guard let date = AppTracker.dayFmtPublic.date(from: key) else { return "" }
         let f = DateFormatter(); f.dateFormat = "EEE"
         return String(f.string(from: date).prefix(1))
     }
-    func hoveredDayLabel(_ key: String) -> String {
+    private func hoveredDayLabel(_ key: String) -> String {
         guard let date = AppTracker.dayFmtPublic.date(from: key) else { return key }
         let f = DateFormatter(); f.dateFormat = "EEE, MMM d"
         return f.string(from: date)
     }
-    func isToday(_ key: String) -> Bool { AppTracker.dayFmtPublic.string(from: Date()) == key }
-    func fmtDuration(_ t: TimeInterval) -> String {
+    private func isToday(_ key: String) -> Bool { AppTracker.dayFmtPublic.string(from: Date()) == key }
+    private func fmtDuration(_ t: TimeInterval) -> String {
         let h = Int(t) / 3600; let m = Int(t) % 3600 / 60
         if h > 0 { return "\(h)h\(m)m" }
         if m > 0 { return "\(m)m" }
@@ -525,6 +584,106 @@ struct AppRow: View {
     }
 
     func fmtDuration(_ t: TimeInterval) -> String {
+        let h = Int(t) / 3600; let m = Int(t) % 3600 / 60
+        if h > 0 { return "\(h)h \(m)m" }
+        if m > 0 { return "\(m)m" }
+        return "<1m"
+    }
+}
+
+// MARK: - Today sessions accordion
+
+struct TodaySessionsView: View {
+    let sessions: [(events: [AppEvent], start: Date, end: Date)]
+    @State private var expandedIdx: Int? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Today")
+                .font(DS.T.caption())
+                .foregroundStyle(DS.C.textFaint)
+                .padding(.horizontal, DS.Space.lg)
+                .padding(.top, DS.Space.md)
+                .padding(.bottom, DS.Space.xs)
+
+            ForEach(sessions.indices, id: \.self) { i in
+                sessionRow(i)
+                if i < sessions.count - 1 {
+                    DSDivider().padding(.leading, DS.Space.lg)
+                }
+            }
+            .padding(.bottom, DS.Space.sm)
+        }
+    }
+
+    @ViewBuilder
+    private func sessionRow(_ i: Int) -> some View {
+        let s         = sessions[i]
+        let score     = sessionFocusScore(s.events)
+        let color     = scoreColor(score)
+        let isExpanded = expandedIdx == i
+
+        VStack(alignment: .leading, spacing: 0) {
+            // Summary row — tap to expand/collapse
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    expandedIdx = isExpanded ? nil : i
+                }
+            } label: {
+                HStack(spacing: DS.Space.sm) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(color.opacity(0.75))
+                        .frame(width: 3, height: 30)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(fmtTime(s.start)) – \(fmtTime(s.end))")
+                            .font(DS.T.mono(11))
+                            .foregroundStyle(DS.C.textPrimary)
+                        Text("\(fmtDuration(s.end.timeIntervalSince(s.start)))  ·  \(Int(score))% focus")
+                            .font(DS.T.caption(10))
+                            .foregroundStyle(DS.C.textFaint)
+                    }
+
+                    Spacer()
+
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(DS.C.textFaint)
+                }
+                .padding(.horizontal, DS.Space.lg)
+                .padding(.vertical, DS.Space.sm)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            // Expanded detail timeline
+            if isExpanded, !s.events.isEmpty {
+                TimelineBar(events: s.events, startTime: s.start, endTime: s.end)
+                    .padding(.horizontal, DS.Space.lg)
+                    .padding(.top, 4)
+                    .padding(.bottom, DS.Space.md)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    private func sessionFocusScore(_ events: [AppEvent]) -> Double {
+        let total = events.reduce(0.0) { $0 + $1.duration }
+        guard total > 0 else { return 0 }
+        let prod = events.filter { $0.category == .productive }.reduce(0.0) { $0 + $1.duration }
+        let dist = events.filter { $0.category == .distracting }.reduce(0.0) { $0 + $1.duration }
+        return max(0, min(100, (prod - dist * 0.5) / total * 100))
+    }
+
+    private func scoreColor(_ score: Double) -> Color {
+        score >= 70 ? DS.C.green : score >= 40 ? DS.C.orange : DS.C.red
+    }
+
+    private func fmtTime(_ d: Date) -> String {
+        let f = DateFormatter(); f.dateFormat = "h:mm a"; return f.string(from: d)
+    }
+
+    private func fmtDuration(_ t: TimeInterval) -> String {
         let h = Int(t) / 3600; let m = Int(t) % 3600 / 60
         if h > 0 { return "\(h)h \(m)m" }
         if m > 0 { return "\(m)m" }

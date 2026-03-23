@@ -8,6 +8,15 @@ class DraggableHostingView<Content: View>: NSHostingView<Content> {
 
     private let edgeSize: CGFloat = 8
 
+    // Re-activate the app on every click so the window accepts input
+    // even when another app has focus (NSApp.activate without ignoringOtherApps
+    // is a no-op when the app is not frontmost).
+    override func mouseDown(with event: NSEvent) {
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+        super.mouseDown(with: event)
+    }
+
     override func resetCursorRects() {
         super.resetCursorRects()
         let b = bounds

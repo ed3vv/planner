@@ -1,7 +1,9 @@
 import AppKit
 import SwiftUI
 import Combine
+import FirebaseCore
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let panelManager = PanelManager()
     let appTracker   = AppTracker()
@@ -13,10 +15,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        FirebaseApp.configure()
         NSApp.setActivationPolicy(.accessory)
         setupButtonPanel()
         setupContentWindow()
         connectTracking()
+        Task { await FirebaseManager.shared.signInIfNeeded() }
     }
 
     // MARK: - Button Panel

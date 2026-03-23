@@ -18,7 +18,7 @@ class PanelManager: ObservableObject {
         isExpanded = true
         positionContentWindow()
         contentWindow?.makeKeyAndOrderFront(nil)
-        NSApp.activate()
+        NSApp.activate(ignoringOtherApps: true)
         // One run-loop cycle after the window is key, SwiftUI can accept focus
         DispatchQueue.main.async { self.expansionTrigger += 1 }
     }

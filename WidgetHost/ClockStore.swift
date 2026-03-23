@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import AVFoundation
 
 enum ClockMode: String, CaseIterable {
     case stopwatch = "Stopwatch"
@@ -178,7 +179,61 @@ class ClockStore: ObservableObject {
         if autoStart { start() }
     }
 
+    // MARK: - Ringtone
+
+    private let chimeEngine = AVAudioEngine()
+    private let chimePlayer = AVAudioPlayerNode()
+    private var chimeEngineReady = false
+
+    private func prepareChimeEngine() {
+        guard !chimeEngineReady else { return }
+        chimeEngine.attach(chimePlayer)
+        chimeEngine.connect(chimePlayer, to: chimeEngine.mainMixerNode, format: nil)
+        try? chimeEngine.start()
+        chimeEngineReady = true
+    }
+
     private func chime() {
-        NSSound(named: "Glass")?.play()
+        prepareChimeEngine()
+
+        let sampleRate: Double = 44100
+        // Ascending arpeggio: C5 → E5 → G5 → C6, each note fades with exponential decay
+        // (frequency Hz, start seconds, duration seconds, amplitude)
+        let notes: [(Double, Double, Double, Double)] = [
+            (523.25, 0.00, 0.55, 0.50),   // C5
+            (659.25, 0.20, 0.55, 0.45),   // E5
+            (783.99, 0.40, 0.65, 0.45),   // G5
+            (1046.5, 0.62, 0.90, 0.38),   // C6
+        ]
+
+        let totalDuration = notes.map { $0.1 + $0.2 }.max() ?? 1.5
+        let totalFrames   = AVAudioFrameCount(totalDuration * sampleRate)
+
+        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: totalFrames) else { return }
+        buffer.frameLength = totalFrames
+
+        let L = buffer.floatChannelData![0]
+        let R = buffer.floatChannelData![1]
+        for i in 0..<Int(totalFrames) { L[i] = 0; R[i] = 0 }
+
+        for (freq, startSec, duration, amp) in notes {
+            let startFrame = Int(startSec * sampleRate)
+            let noteFrames = Int(duration * sampleRate)
+            for i in 0..<noteFrames {
+                let t   = Double(i) / sampleRate
+                let env = exp(-t * 3.5)                              // decay envelope
+                let harmonics = sin(2 * .pi * freq * t)             // fundamental
+                             + sin(4 * .pi * freq * t) * 0.25       // 2nd harmonic (body)
+                             + sin(8 * .pi * freq * t) * 0.06       // 4th harmonic (sparkle)
+                let val = Float(harmonics * env * amp)
+                let fi  = startFrame + i
+                if fi < Int(totalFrames) { L[fi] += val; R[fi] += val }
+            }
+        }
+
+        chimePlayer.stop()
+        chimePlayer.scheduleBuffer(buffer, completionHandler: nil)
+        chimePlayer.play()
     }
 }

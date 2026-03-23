@@ -52,6 +52,7 @@ struct DailyRecord: Codable, Identifiable {
     var sessionCount: Int
 }
 
+@MainActor
 class AppTracker: ObservableObject {
     @Published var currentAppName: String   = ""
     @Published var currentAppIcon: NSImage? = nil
@@ -63,9 +64,10 @@ class AppTracker: ObservableObject {
     @Published var lastRecap: SessionRecap? = nil
     @Published var timerStartTime: Date     = Date()
 
-    private var isTrackingEnabled  = false
-    private var sessionStart: Date = Date()
-    private var currentBundleID    = ""
+    private var isTrackingEnabled      = false
+    private var sessionStart: Date     = Date()
+    private var sessionFlushedDuration: TimeInterval = 0  // time already added to accumulated in current session
+    private var currentBundleID        = ""
     private var accumulated: [String: (name: String, icon: NSImage?, duration: TimeInterval)] = [:]
     private var flushTimer: Timer?
 
@@ -200,6 +202,7 @@ class AppTracker: ObservableObject {
         currentURL        = ""
         finaliseRecap()
         saveTodayRecord()
+        FirebaseManager.shared.updatePresence(focusScore: focusScore, currentApp: nil, isOnline: false)
     }
 
     // MARK: - Computed averages
@@ -218,6 +221,13 @@ class AppTracker: ObservableObject {
         return r.map(\.productiveSeconds).reduce(0, +) / Double(s)
     }
 
+    var todayRecord: DailyRecord {
+        effectiveHistory.first { $0.dayKey == todayKey }
+            ?? DailyRecord(dayKey: todayKey, focusScore: focusScore,
+                           productiveSeconds: 0, distractingSeconds: 0,
+                           totalSeconds: 0, sessionCount: 0)
+    }
+
     var last7Days: [DailyRecord] {
         let cal = Calendar.current
         return (0..<7).compactMap { offset in
@@ -229,30 +239,48 @@ class AppTracker: ObservableObject {
         }
     }
 
+    // Synthesised event for the currently running app (not yet committed to currentEventLog)
+    var liveEvent: AppEvent? {
+        guard isTrackingEnabled, !currentBundleID.isEmpty,
+              browserScriptName[currentBundleID] == nil else { return nil }
+        let dur = Date().timeIntervalSince(sessionStart)
+        guard dur > 1 else { return nil }
+        return AppEvent(bundleID: currentBundleID, name: currentAppName,
+                        category: category(for: currentBundleID),
+                        startTime: sessionStart, duration: dur)
+    }
+
     var todayTimeline: [AppEvent] {
         let key = todayKey
         let saved = recaps.filter { $0.dayKey == key }.flatMap(\.events)
-        return (saved + currentEventLog).sorted { $0.startTime < $1.startTime }
+        var all = saved + currentEventLog
+        if let live = liveEvent { all.append(live) }
+        return all.sorted { $0.startTime < $1.startTime }
     }
 
     var todaySessions: [(events: [AppEvent], start: Date, end: Date)] {
         let key = todayKey
         var result: [(events: [AppEvent], start: Date, end: Date)] = []
-        for recap in recaps.filter({ $0.dayKey == key }).reversed() {
+        for recap in recaps.filter({ $0.dayKey == key }) {
             result.append((recap.events, recap.startedAt, recap.endedAt))
         }
-        if isTracking, !currentEventLog.isEmpty {
-            let end = currentEventLog.last.map { $0.startTime.addingTimeInterval($0.duration) } ?? Date()
-            result.append((currentEventLog, timerStartTime, max(end, Date())))
+        if isTracking {
+            var events = currentEventLog
+            if let live = liveEvent { events.append(live) }
+            if !events.isEmpty {
+                let end = events.map { $0.startTime.addingTimeInterval($0.duration) }.max() ?? Date()
+                result.append((events, timerStartTime, max(end, Date())))
+            }
         }
-        return result
+        return result.sorted { $0.start < $1.start }
     }
 
     // MARK: - Private: session management
 
     private func startSession(for app: NSRunningApplication) {
         let bundleID = app.bundleIdentifier ?? "unknown"
-        sessionStart = Date()
+        sessionStart          = Date()
+        sessionFlushedDuration = 0
 
         if let scriptName = browserScriptName[bundleID] {
             // Browser: set placeholder, then async-fetch actual URL
@@ -274,9 +302,10 @@ class AppTracker: ObservableObject {
                     self.currentAppName  = domain
                 } else {
                     self.endCurrentSession()
-                    self.currentBundleID = "web:\(domain)"
-                    self.currentAppName  = domain
-                    self.sessionStart    = Date()
+                    self.currentBundleID        = "web:\(domain)"
+                    self.currentAppName         = domain
+                    self.sessionStart           = Date()
+                    self.sessionFlushedDuration = 0
                 }
                 self.currentURL = domain
             }
@@ -298,15 +327,22 @@ class AppTracker: ObservableObject {
         // browser's own ID, not a "web:domain" key). Prevents "Safari" / "Google Chrome"
         // appearing as spurious short entries alongside the real domain entries.
         guard browserScriptName[currentBundleID] == nil else { return }
-        let dur = Date().timeIntervalSince(sessionStart)
-        guard dur > 0.5 else { return }
-        let prev = accumulated[currentBundleID]
-        let icon: NSImage? = prev?.icon
-            ?? (currentBundleID.hasPrefix("web:") ? currentBrowserIcon : iconForBundle(currentBundleID))
-        accumulated[currentBundleID] = (currentAppName, icon, (prev?.duration ?? 0) + dur)
-        let cat = category(for: currentBundleID)
-        currentEventLog.append(AppEvent(bundleID: currentBundleID, name: currentAppName,
-                                        category: cat, startTime: sessionStart, duration: dur))
+        let totalDur = Date().timeIntervalSince(sessionStart)
+        let newDur   = totalDur - sessionFlushedDuration   // un-flushed portion
+        // Add only the portion not yet flushed to accumulated
+        if newDur > 0.5 {
+            let prev = accumulated[currentBundleID]
+            let icon: NSImage? = prev?.icon
+                ?? (currentBundleID.hasPrefix("web:") ? currentBrowserIcon : iconForBundle(currentBundleID))
+            accumulated[currentBundleID] = (currentAppName, icon, (prev?.duration ?? 0) + newDur)
+        }
+        // Event spans the full session from true sessionStart (not the last flush point)
+        if totalDur > 0.5 {
+            let cat = category(for: currentBundleID)
+            currentEventLog.append(AppEvent(bundleID: currentBundleID, name: currentAppName,
+                                            category: cat, startTime: sessionStart, duration: totalDur))
+        }
+        sessionFlushedDuration = 0
         rebuildStats()
     }
 
@@ -334,10 +370,11 @@ class AppTracker: ObservableObject {
             guard let url, let domain = self.extractDomain(from: url),
                   domain != self.currentURL else { return }
             self.endCurrentSession()
-            self.currentBundleID = "web:\(domain)"
-            self.currentAppName  = domain
-            self.currentAppIcon  = self.currentBrowserIcon
-            self.sessionStart    = Date()
+            self.currentBundleID        = "web:\(domain)"
+            self.currentAppName         = domain
+            self.currentAppIcon         = self.currentBrowserIcon
+            self.sessionStart           = Date()
+            self.sessionFlushedDuration = 0
             self.currentURL      = domain
         }
     }
@@ -362,14 +399,11 @@ class AppTracker: ObservableObject {
         DispatchQueue.main.async {
             var err: NSDictionary?
             let result = NSAppleScript(source: src)?.executeAndReturnError(&err)
-            if let err = err {
-                print("[BrowserTrack] ❌ AppleScript error (\(scriptName)):", err)
+            if err != nil {
                 completion(nil)
             } else if let str = result?.stringValue, !str.isEmpty, str.contains("://") {
-                print("[BrowserTrack] ✅ URL (\(scriptName)):", str)
                 completion(str)
             } else {
-                print("[BrowserTrack] ⚠️ No URL returned (\(scriptName)), raw:", result?.stringValue ?? "nil")
                 completion(nil)
             }
         }
@@ -426,6 +460,7 @@ class AppTracker: ObservableObject {
             UserDefaults.standard.set(data, forKey: historyKey)
         }
         history = dailyRecords.values.sorted { $0.dayKey > $1.dayKey }
+        FirebaseManager.shared.syncDailyRecord(dailyRecords[key]!)
     }
 
     private func saveRecaps() {
@@ -472,7 +507,21 @@ class AppTracker: ObservableObject {
         RunLoop.main.add(flushTimer!, forMode: .common)
     }
 
-    private func flushCurrentSession() { endCurrentSession(); sessionStart = Date() }
+    private func flushCurrentSession() {
+        // Accumulate elapsed time without ending the session or creating an event.
+        // Events are only written in endCurrentSession() on real app switches / stop.
+        guard !currentBundleID.isEmpty,
+              browserScriptName[currentBundleID] == nil else { return }
+        let totalDur = Date().timeIntervalSince(sessionStart)
+        let newDur   = totalDur - sessionFlushedDuration
+        guard newDur > 0.5 else { return }
+        let prev = accumulated[currentBundleID]
+        let icon: NSImage? = prev?.icon
+            ?? (currentBundleID.hasPrefix("web:") ? currentBrowserIcon : iconForBundle(currentBundleID))
+        accumulated[currentBundleID] = (currentAppName, icon, (prev?.duration ?? 0) + newDur)
+        sessionFlushedDuration = totalDur   // remember what we've already counted
+        rebuildStats()
+    }
 
     private func rebuildStats() {
         todayUsage = accumulated.map { bundleID, val in
@@ -484,6 +533,12 @@ class AppTracker: ObservableObject {
         let prod = todayUsage.filter { $0.category == .productive }.reduce(0.0) { $0 + $1.duration }
         let dist = todayUsage.filter { $0.category == .distracting }.reduce(0.0) { $0 + $1.duration }
         focusScore = max(0, min(100, (prod - dist * 0.5) / total * 100))
+        // Broadcast live presence so friends can see your focus score + current app
+        FirebaseManager.shared.updatePresence(
+            focusScore: focusScore,
+            currentApp: currentAppName.isEmpty ? nil : currentAppName,
+            isOnline:   isTrackingEnabled
+        )
     }
 
     private func iconForBundle(_ id: String) -> NSImage? {
